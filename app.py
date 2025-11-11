@@ -2,17 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 Automação Progressão por Mérito — GUI (.ods -> resultado_progressao.xlsx)
-- Lê todas as planilhas do .ods.
-- Linhas geradas quando J13, N13 ou S13 ≠ 0 com: A13, B13, MES/ANO=C5, rubrica="00001",
-  rendimento="r", sequência=C6, valor=abs(...), justificativa=C9, documento legal=C10.
-- Apenas XLSX (sem CSV). 'valor' com 2 casas, sem "R$", formato Excel '#,##0.00'
-  (milhar com ponto, decimal com vírgula) e coluna mais larga.
-Requisitos: pip install pandas odfpy openpyxl
+
+- Varre 13..63 e 71..121 em cada planilha do .ods.
+- Só gera linha quando (J/N/S) > 0 (após abs() e round(2)) E quando A ou B tiver conteúdo.
+- Para cada J/N/S com valor: A_r, B_r, MES/ANO=C5, rubrica="00001", rendimento="r",
+  sequência=C6, valor, justificativa=C9, documento legal=C10.
+- Saída: apenas XLSX; 'valor' com 2 casas, sem "R$" (formato '#,##0.00'); coluna mais larga.
 """
 
 import os, re, sys, platform
 from typing import Optional, Any, List, Dict
 
+# --- Dependências ---
 try:
     import pandas as pd
 except ModuleNotFoundError:
@@ -22,135 +23,137 @@ except ModuleNotFoundError:
     _mb.showerror("Dependência ausente", "Instale:\n\npip install pandas odfpy openpyxl")
     sys.exit(1)
 
+# --- GUI ---
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from openpyxl.utils import get_column_letter
 
+# --- Utilidades ---
 def col_to_index(col: str) -> int:
-    col = col.strip().upper()
-    idx = 0
+    col = col.strip().upper(); idx = 0
     for ch in col:
-        if not ('A' <= ch <= 'Z'):
-            raise ValueError(f"Coluna inválida: {col}")
+        if not ('A' <= ch <= 'Z'): raise ValueError(f"Coluna inválida: {col}")
         idx = idx*26 + (ord(ch)-ord('A')+1)
     return idx-1
 
 def get_cell(df: pd.DataFrame, col_letter: str, row_number: int) -> Any:
-    r = row_number-1
-    c = col_to_index(col_letter)
-    try:
-        return df.iat[r, c]
-    except Exception:
-        return None
+    r = row_number-1; c = col_to_index(col_letter)
+    try: return df.iat[r, c]
+    except Exception: return None
 
-def parse_br_number(value: Any) -> Optional[float]:
-    """Converte valores pt-BR (ex.: 'R$ 1.234,56') para float; None se vazio."""
-    if value is None: return None
-    if isinstance(value, (int, float)):
-        try: return float(value)
+def parse_br_number(v: Any) -> Optional[float]:
+    """Converte 'R$ 1.234,56' etc. em float; None se vazio/inválido."""
+    if v is None: return None
+    if isinstance(v, (int, float)):
+        try: return float(v)
         except: return None
-    s = str(value).strip()
-    if s == "" or s.lower() in {"nan","none"}: return None
+    s = str(v).strip()
+    if s == "" or s.lower() in {"nan", "none"}: return None
     s = s.replace("R$","").replace("r$","").replace(" ","").replace("\xa0","")
     s = s.replace("%","").replace(".","").replace(",",".")
     s = re.sub(r"[^0-9\.\-]","", s)
     try: return float(s)
     except: return None
 
+def not_blank(x: Any) -> bool:
+    return x is not None and str(x).strip() != ""
+
+def to_amount(v: Any) -> Optional[float]:
+    """Normaliza: módulo + 2 casas; retorna None se o resultado for 0.00."""
+    f = parse_br_number(v)
+    if f is None: return None
+    val = round(abs(float(f)), 2)
+    return val if val > 0 else None
+
+# --- Núcleo ---
+def append_rows_for(df: pd.DataFrame, out: List[Dict[str, Any]], rownum: int):
+    a = get_cell(df,"A",rownum)
+    b = get_cell(df,"B",rownum)
+    mes_ano = get_cell(df,"C",5)
+    seq = get_cell(df,"C",6)
+    just = get_cell(df,"C",9)
+    doc = get_cell(df,"C",10)
+
+    vals = {
+        "J": to_amount(get_cell(df,"J",rownum)),
+        "N": to_amount(get_cell(df,"N",rownum)),
+        "S": to_amount(get_cell(df,"S",rownum)),
+    }
+    has_amount = any(v is not None for v in vals.values())
+    has_identity = not_blank(a) or not_blank(b)
+
+    if not (has_amount and has_identity):
+        return  # evita linhas vazias/sem valor
+
+    for _, num in vals.items():
+        if num is not None:
+            out.append({
+                "A13": a,
+                "B13": b,
+                "MES/ANO": mes_ano,
+                "rubrica": "00001",
+                "rendimento": "r",
+                "sequência": seq,
+                "valor": num,
+                "justificativa": just,
+                "documento legal": doc,
+            })
+
 def process_sheet(df: pd.DataFrame) -> List[Dict[str, Any]]:
     linhas: List[Dict[str, Any]] = []
-    a13 = get_cell(df,"A",13); b13 = get_cell(df,"B",13)
-    mes_ano = get_cell(df,"C",5); seq = get_cell(df,"C",6)
-    just = get_cell(df,"C",9);  doc = get_cell(df,"C",10)
-
-    # J13
-    j13 = parse_br_number(get_cell(df,"J",13))
-    if j13 is not None and j13 != 0:
-        linhas.append({
-            "A13": a13, "B13": b13, "MES/ANO": mes_ano,
-            "rubrica": "00001", "rendimento": "r", "sequência": seq,
-            "valor": abs(float(j13)), "justificativa": just, "documento legal": doc
-        })
-    # N13
-    n13 = parse_br_number(get_cell(df,"N",13))
-    if n13 is not None and n13 != 0:
-        linhas.append({
-            "A13": a13, "B13": b13, "MES/ANO": mes_ano,
-            "rubrica": "00001", "rendimento": "r", "sequência": seq,
-            "valor": abs(float(n13)), "justificativa": just, "documento legal": doc
-        })
-    # S13 (NOVO)
-    s13 = parse_br_number(get_cell(df,"S",13))
-    if s13 is not None and s13 != 0:
-        linhas.append({
-            "A13": a13, "B13": b13, "MES/ANO": mes_ano,
-            "rubrica": "00001", "rendimento": "r", "sequência": seq,
-            "valor": abs(float(s13)), "justificativa": just, "documento legal": doc
-        })
+    for r in list(range(13, 64)) + list(range(71, 122)):
+        append_rows_for(df, linhas, r)
     return linhas
 
 def build_table_from_ods(file_path: str) -> pd.DataFrame:
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
-    try:
-        xls = pd.ExcelFile(file_path, engine="odf")
-    except Exception as e:
-        raise RuntimeError("Falha ao abrir .ods. Instale: pip install odfpy\n\nDetalhe: "+str(e)) from e
-
+    if not os.path.exists(file_path): raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
+    try: xls = pd.ExcelFile(file_path, engine="odf")
+    except Exception as e: raise RuntimeError("Falha ao abrir .ods. Instale: pip install odfpy\n\nDetalhe: "+str(e)) from e
     rows: List[Dict[str, Any]] = []
     for name in xls.sheet_names:
         df = pd.read_excel(file_path, sheet_name=name, header=None, engine="odf")
         rows.extend(process_sheet(df))
-
     cols = ["A13","B13","MES/ANO","rubrica","rendimento","sequência","valor","justificativa","documento legal"]
-    out = pd.DataFrame(rows, columns=cols)
-    if "valor" in out.columns:
-        out["valor"] = pd.to_numeric(out["valor"], errors="coerce").abs().round(2)
-    return out
+    return pd.DataFrame(rows, columns=cols)
 
 def salvar_excel(df: pd.DataFrame, origem: str) -> str:
-    from openpyxl.utils import get_column_letter
-
     base = os.path.dirname(os.path.abspath(origem))
     xlsx_out = os.path.join(base, "resultado_progressao.xlsx")
-
     with pd.ExcelWriter(xlsx_out, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="resultado")
         ws = writer.sheets["resultado"]
-
-        # 'valor' como número com milhar e 2 casas, sem "R$"
         if "valor" in df.columns:
             cidx = df.columns.get_loc("valor") + 1
             col_letter = get_column_letter(cidx)
-            for r in range(2, len(df) + 2):
+            for r in range(2, len(df)+2):
                 cell = ws[f"{col_letter}{r}"]
-                cell.number_format = "#,##0.00"   # exibirá 1.234,56 no PT-BR
+                cell.number_format = "#,##0.00"   # 1.234,56 (sem R$)
                 try: cell.style = "Normal"
                 except Exception: pass
-            ws.column_dimensions[col_letter].width = 14  # para até 000.000,00
-
+            ws.column_dimensions[col_letter].width = 14  # até 000.000,00
         # Ajuste simples das demais colunas
         for i, name in enumerate(df.columns, start=1):
-            if name == "valor":
-                continue
+            if name == "valor": continue
             try:
                 maxlen = max((len(str(x)) for x in [name] + df[name].astype(str).tolist()), default=10)
             except Exception:
                 maxlen = 15
-            ws.column_dimensions[get_column_letter(i)].width = min(max(10, maxlen + 2), 60)
-
+            ws.column_dimensions[get_column_letter(i)].width = min(max(10, maxlen+2), 60)
     return xlsx_out
 
 def abrir_pasta(path: str):
+    """ABRE a pasta no SO (Windows/Mac/Linux)."""
     try:
         if platform.system() == "Windows":
-            os.startfile(path)  # type: ignore
+            os.startfile(path)  # type: ignore[attr-defined]
         elif platform.system() == "Darwin":
-            __import__("subprocess").Popen(["open", path])
+            import subprocess; subprocess.Popen(["open", path])
         else:
-            __import__("subprocess").Popen(["xdg-open", path])
+            import subprocess; subprocess.Popen(["xdg-open", path])
     except Exception:
         pass
 
+# --- GUI ---
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -167,13 +170,11 @@ class App(tk.Tk):
         self.lbl_status = tk.Label(self, text="", anchor="w", fg="#333"); self.lbl_status.pack(fill="x", padx=12)
         self.btn_abrir_pasta = tk.Button(self, text="Abrir pasta de saída", command=self.abrir_saida, state="disabled")
         self.btn_abrir_pasta.pack(padx=12, pady=10)
-        tk.Label(self, text="Versão 2.0 - GUI (inclui S13)", anchor="e", fg="#777").pack(fill="x", padx=12, pady=(8,10))
+        tk.Label(self, text="Versão 2.8 - corrigido abrir_pasta()", anchor="e", fg="#777").pack(fill="x", padx=12, pady=(8,10))
 
     def escolher_arquivo(self):
-        p = filedialog.askopenfilename(
-            title="Selecione o arquivo .ods",
-            filetypes=[("Planilhas ODS","*.ods"), ("Todos os arquivos","*.*")]
-        )
+        p = filedialog.askopenfilename(title="Selecione o arquivo .ods",
+                                       filetypes=[("Planilhas ODS","*.ods"), ("Todos os arquivos","*.*")])
         if p:
             self.ods_path = p
             self.ent_path.delete(0, tk.END); self.ent_path.insert(0, p)
