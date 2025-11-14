@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Automatização para Macro de Pagamentos — GUI (.ods -> resultadoautomatizacao.xlsx)
+Automatização para Macro de Pagamentos — GUI (.ods -> 2 arquivos separados)
 
-Apenas VISUAL ajustado; LÓGICA preservada:
+>>> Alteração solicitada (somente salvamento, lógica intacta):
+- Salva em DOIS arquivos:
+  1) "Progressão por Mérito UFGD.xlsx"  (linhas 13..63)
+  2) "Progressão por Mérito HU.xlsx"    (linhas 71..121)
+
+Demais comportamentos de UI e lógica permanecem iguais:
 - Processamento automático ao escolher o .ods.
 - Banner com altura dinâmica (evita texto cortado).
 - Instruções: "1. Selecione o arquivo .ods.  2. Clique em 'Abrir pasta de saída'."
-- Botões: antes destaca "Selecionar"; após processar destaca "Abrir pasta de saída".
-- Status mostra apenas "Caminho: <arquivo.xlsx>".
-- Rodapé: Versão 1.0 - 11/11/2025.
-
-Regras de extração (inalteradas):
-- Varre linhas 13..63 e 71..121 em cada planilha do .ods.
-- Só gera linha quando J/N/S tiverem valor > 0 após abs() e round(2) E quando A ou B tiver conteúdo.
-- Para cada J/N/S com valor: A_r, B_r, MES/ANO=C5, rubrica="00001", rendimento="r",
-  sequência=C6, valor, justificativa=C9, documento legal=C10.
-- Saída XLSX: número com 2 casas, formato '#,##0.00' (sem "R$"), coluna 'valor' largura 14.
+- Status mostra apenas "Caminho: <arquivo1> | <arquivo2>".
+- Regras de extração (inalteradas):
+  * Só gera linha quando J/N/S tiverem valor > 0 após abs() e round(2) E quando A ou B tiver conteúdo.
+  * Para cada J/N/S com valor: A_r, B_r, MES/ANO=C5, rubrica="00001", rendimento="r",
+    sequência=C6, valor, justificativa=C9, documento legal=C10.
+  * 'valor' com 2 casas, formato '#,##0.00' (sem "R$"), coluna 'valor' largura 14.
 """
 
 import os, re, sys, platform
@@ -99,28 +100,52 @@ def append_rows_for(df: pd.DataFrame, out: List[Dict[str, Any]], rownum: int):
             })
 
 def process_sheet(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """(Mantida) Retorna todas as linhas (13..63 e 71..121)."""
     linhas: List[Dict[str, Any]] = []
     for r in list(range(13, 64)) + list(range(71, 122)):
         append_rows_for(df, linhas, r)
     return linhas
 
-def build_table_and_counts(file_path: str):
-    """Retorna (DataFrame consolidado, lista (sheet_name, linhas_geradas))."""
+def process_sheet_dual(df: pd.DataFrame):
+    """NOVO: separa por faixas sem alterar a lógica de extração."""
+    linhas_ufgd: List[Dict[str, Any]] = []
+    linhas_hu:   List[Dict[str, Any]] = []
+    for r in range(13, 64):
+        append_rows_for(df, linhas_ufgd, r)
+    for r in range(71, 122):
+        append_rows_for(df, linhas_hu, r)
+    return linhas_ufgd, linhas_hu
+
+def build_tables_and_counts_dual(file_path: str):
+    """Retorna (df_total, details, df_ufgd, df_hu) — counts continuam por planilha."""
     if not os.path.exists(file_path): raise FileNotFoundError(f"Arquivo não encontrado: {file_path}")
     try: xls = pd.ExcelFile(file_path, engine="odf")
     except Exception as e: raise RuntimeError("Falha ao abrir .ods. Instale: pip install odfpy\n\nDetalhe: "+str(e)) from e
-    all_rows: List[Dict[str, Any]] = []; details: List[tuple] = []
+
+    all_rows: List[Dict[str, Any]] = []
+    details: List[tuple] = []
+    all_ufgd: List[Dict[str, Any]] = []
+    all_hu:   List[Dict[str, Any]] = []
+
     for name in xls.sheet_names:
         df = pd.read_excel(file_path, sheet_name=name, header=None, engine="odf")
-        rows = process_sheet(df)
-        all_rows.extend(rows); details.append((name, len(rows)))
-    cols = ["A13","B13","MES/ANO","rubrica","rendimento","sequência","valor","justificativa","documento legal"]
-    return pd.DataFrame(all_rows, columns=cols), details
+        ufgd_rows, hu_rows = process_sheet_dual(df)
+        # para a árvore: total por planilha
+        details.append((name, len(ufgd_rows) + len(hu_rows)))
+        # acumula
+        all_rows.extend(ufgd_rows); all_rows.extend(hu_rows)
+        all_ufgd.extend(ufgd_rows); all_hu.extend(hu_rows)
 
-def salvar_excel(df: pd.DataFrame, origem: str) -> str:
-    """Salva como resultadoautomatizacao.xlsx com 'valor' em '#,##0.00' e largura adequada."""
+    cols = ["A13","B13","MES/ANO","rubrica","rendimento","sequência","valor","justificativa","documento legal"]
+    df_total = pd.DataFrame(all_rows, columns=cols)
+    df_ufgd  = pd.DataFrame(all_ufgd, columns=cols)
+    df_hu    = pd.DataFrame(all_hu, columns=cols)
+    return df_total, details, df_ufgd, df_hu
+
+def salvar_excel_as(df: pd.DataFrame, origem: str, basename: str) -> str:
+    """Salva XLSX com nome definido por 'basename'."""
     base = os.path.dirname(os.path.abspath(origem))
-    xlsx_out = os.path.join(base, "resultadoautomatizacao.xlsx")  # <- nome final solicitado
+    xlsx_out = os.path.join(base, basename)
     with pd.ExcelWriter(xlsx_out, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="resultado")
         ws = writer.sheets["resultado"]
@@ -132,8 +157,7 @@ def salvar_excel(df: pd.DataFrame, origem: str) -> str:
                 cell.number_format = "#,##0.00"   # 1.234,56 (sem símbolo)
                 try: cell.style = "Normal"
                 except Exception: pass
-            ws.column_dimensions[col_letter].width = 14  # até 000.000,00
-        # Ajuste simples das demais colunas
+            ws.column_dimensions[col_letter].width = 14
         for i, name in enumerate(df.columns, start=1):
             if name == "valor": continue
             try:
@@ -154,7 +178,7 @@ def abrir_pasta(path: str):
     except Exception:
         pass
 
-# ================== APP (VISUAL) ==================
+# ================== APP (VISUAL preservado) ==================
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -176,13 +200,9 @@ class App(tk.Tk):
                              font=("Segoe UI", 9), padding=6)
         self.style.map("Muted.TButton", background=[("active", "#D5D5D5")])
 
-        # ---- Banner (altura dinâmica para não cortar) ----
-        banner = tk.Frame(self, bg="#eaf5e6")
-        banner.pack(fill="x", side="top")
-        banner.pack_propagate(False)
-
-        left = tk.Frame(banner, bg="#eaf5e6")
-        left.pack(side="left", padx=18, pady=14, fill="both", expand=True)
+        # ---- Banner (altura dinâmica) ----
+        banner = tk.Frame(self, bg="#eaf5e6"); banner.pack(fill="x", side="top"); banner.pack_propagate(False)
+        left = tk.Frame(banner, bg="#eaf5e6"); left.pack(side="left", padx=18, pady=14, fill="both", expand=True)
 
         title_font = tkfont.Font(family="Segoe UI", size=20, weight="bold")
         subtitle_black = tkfont.Font(family="Segoe UI", size=12, weight="bold")
@@ -198,21 +218,16 @@ class App(tk.Tk):
         right = tk.Frame(banner, bg="#eaf5e6"); right.pack(side="right", padx=18, pady=10)
         self._load_and_place_logo(right, target_h=80)
 
-        # Calcula altura necessária (evita corte independente de DPI)
         title_h = title_font.metrics("linespace")
         sub1_h  = subtitle_black.metrics("linespace")
         sub2_h  = subtitle_green.metrics("linespace")
         needed  = 14 + title_h + 3 + sub1_h + 2 + sub2_h + 14
         banner.configure(height=max(needed, 120))
 
-        # ---- Faixa de instruções ----
-        hint = tk.Frame(self, bg="#e9e9e9", height=32)
-        hint.pack(fill="x", padx=16, pady=(10, 10))
-        tk.Label(
-            hint,
-            text="1. Selecione o arquivo .ods.  2. Clique em 'Abrir pasta de saída'.",
-            bg="#e9e9e9", fg="#333333", font=("Segoe UI", 10)
-        ).pack(anchor="w", padx=10, pady=6)
+        # ---- Instruções ----
+        hint = tk.Frame(self, bg="#e9e9e9", height=32); hint.pack(fill="x", padx=16, pady=(10, 10))
+        tk.Label(hint, text="1. Selecione o arquivo .ods.  2. Clique em 'Abrir pasta de saída'.",
+                 bg="#e9e9e9", fg="#333333", font=("Segoe UI", 10)).pack(anchor="w", padx=10, pady=6)
 
         # ---- Ações ----
         actions = tk.Frame(self, bg="#f5f5f5"); actions.pack(fill="x", padx=16)
@@ -223,7 +238,7 @@ class App(tk.Tk):
                                           command=self.abrir_saida, state="disabled", style="Muted.TButton")
         self.btn_abrir_pasta.pack(side="left", padx=(8, 0))
 
-        # ---- Status (apenas Caminho:) ----
+        # ---- Status ----
         self.lbl_status = tk.Label(self, text="Nenhum arquivo selecionado.", anchor="w",
                                    fg="#333", bg="#f5f5f5")
         self.lbl_status.pack(fill="x", padx=18, pady=(10, 6))
@@ -242,8 +257,7 @@ class App(tk.Tk):
         table_frame.grid_columnconfigure(0, weight=1); table_frame.grid_rowconfigure(0, weight=1)
 
         # ---- Rodapé ----
-        footer = tk.Frame(self, bg="#f5f5f5")
-        footer.pack(fill="x", side="bottom", padx=16, pady=(0, 10))
+        footer = tk.Frame(self, bg="#f5f5f5"); footer.pack(fill="x", side="bottom", padx=16, pady=(0, 10))
         tk.Label(footer, text="Versão 1.0 - 11/11/2025", bg="#f5f5f5", fg="#777").pack(side="left")
         tk.Button(footer, text="bom dia de trabalho", relief="groove", state="disabled",
                   fg="#2e7d32", bg="#eef7ea", disabledforeground="#2e7d32").pack(side="right")
@@ -285,27 +299,30 @@ class App(tk.Tk):
                                        filetypes=[("Planilhas ODS","*.ods"), ("Todos os arquivos","*.*")])
         if not p: return
         self.ods_path = p
-        # Estado inicial: destacar selecionar / desabilitar abrir pasta
         self.btn_browse.configure(style="Primary.TButton")
         self.btn_abrir_pasta.configure(style="Muted.TButton", state="disabled")
-
         self.lbl_status.config(text=f"Processando '{p}' ...")
         for item in self.tree.get_children(): self.tree.delete(item)
         self.after(50, self.processar_automatico)
 
     def processar_automatico(self):
         try:
-            df, details = build_table_and_counts(self.ods_path)
-            xlsx = salvar_excel(df, self.ods_path)
+            # ---> usa versão dual (sem alterar lógica de extração)
+            df_total, details, df_ufgd, df_hu = build_tables_and_counts_dual(self.ods_path)
 
+            # Salva dois arquivos separados com nomes solicitados
+            xlsx1 = salvar_excel_as(df_ufgd, self.ods_path, "Progressão por Mérito UFGD.xlsx")
+            xlsx2 = salvar_excel_as(df_hu,   self.ods_path, "Progressão por Mérito HU.xlsx")
+
+            # Popula a tabela (continua por planilha)
             arquivo = os.path.basename(self.ods_path)
             for (sheet_name, count) in details:
                 self.tree.insert("", "end", values=(arquivo, sheet_name, count))
 
-            # Status: apenas Caminho:
-            self.lbl_status.config(text=f"Caminho: {xlsx}")
+            # Status: mostra ambos os caminhos
+            self.lbl_status.config(text=f"Caminho: {xlsx1}  |  {xlsx2}")
 
-            # Após processar: destacar "Abrir pasta de saída"
+            # Destaques de botões pós-processamento
             self.btn_browse.configure(style="Muted.TButton")
             self.btn_abrir_pasta.configure(style="Primary.TButton", state="normal")
 
