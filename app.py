@@ -282,6 +282,7 @@ class App(tk.Tk):
         )
         self.style.map("Muted.TButton", background=[("active", "#D5D5D5")])
 
+        # ---- Banner ----
         banner = tk.Frame(self, bg="#eaf5e6")
         banner.pack(fill="x", side="top")
         banner.pack_propagate(False)
@@ -299,9 +300,10 @@ class App(tk.Tk):
             fg="#1b1b1b",
             font=title_font,
         ).pack(anchor="w")
+        # Linha de subtítulo removida (texto em branco para manter layout)
         tk.Label(
             left,
-            text="Sequência 6 - 00001",
+            text="",
             bg="#eaf5e6",
             fg="#000000",
             font=subtitle_black,
@@ -324,6 +326,7 @@ class App(tk.Tk):
         needed  = 14 + title_h + 3 + sub1_h + 2 + sub2_h + 14
         banner.configure(height=max(needed, 120))
 
+        # ---- Instruções ----
         hint = tk.Frame(self, bg="#e9e9e9", height=32)
         hint.pack(fill="x", padx=16, pady=(10, 10))
         tk.Label(
@@ -334,6 +337,7 @@ class App(tk.Tk):
             font=("Segoe UI", 10),
         ).pack(anchor="w", padx=10, pady=6)
 
+        # ---- Ações ----
         actions = tk.Frame(self, bg="#f5f5f5")
         actions.pack(fill="x", padx=16)
         self.btn_browse = ttk.Button(
@@ -352,6 +356,7 @@ class App(tk.Tk):
         )
         self.btn_abrir_pasta.pack(side="left", padx=(8, 0))
 
+        # ---- Status ----
         self.lbl_status = tk.Label(
             self,
             text="Nenhum arquivo selecionado.",
@@ -361,6 +366,7 @@ class App(tk.Tk):
         )
         self.lbl_status.pack(fill="x", padx=18, pady=(10, 6))
 
+        # ---- Tabela ----
         table_frame = tk.Frame(self, bg="#f5f5f5")
         table_frame.pack(fill="both", expand=True, padx=18, pady=(0, 10))
         self.tree = ttk.Treeview(
@@ -382,11 +388,12 @@ class App(tk.Tk):
         table_frame.grid_columnconfigure(0, weight=1)
         table_frame.grid_rowconfigure(0, weight=1)
 
+        # ---- Rodapé ----
         footer = tk.Frame(self, bg="#f5f5f5")
         footer.pack(fill="x", side="bottom", padx=16, pady=(0, 10))
         tk.Label(
             footer,
-            text="Versão 1.0 - 11/11/2025",
+            text="Versão 1.1 - 02/12/2025",
             bg="#f5f5f5",
             fg="#777",
         ).pack(side="left")
