@@ -1,0 +1,137 @@
+Option Explicit
+
+' Pequena pausa para dar tempo da tela carregar
+Private Sub Espera(segundos As Double)
+    Dim t As Double
+    t = Timer
+    Do While Timer < t + segundos
+        DoEvents
+    Loop
+End Sub
+
+Public Sub Lanca_FPATMOVFIN()
+    ' Título da janela do emulador do SIAPE (barra branca lá em cima)
+    ' Se mudar de sessão (AWWA1VUC), ajuste este texto.
+    Const JANELA_SIAPE As String = "Terminal 3270 - A - AWWA1VUC"
+    Const LINHA_INICIAL As Long = 2   ' Começa na linha 2 (primeiro registro)
+
+    Dim ws As Worksheet
+    Dim ultimaLinha As Long
+    Dim lin As Long
+
+    Dim matricula As String
+    Dim rendimento As String
+    Dim rubrica As String
+    Dim sequencia As String
+    Dim mesAno As String
+    Dim valor As String
+    Dim assunto As String
+    Dim docLegal As String
+    Dim justificativa As String
+
+    Set ws = ThisWorkbook.Worksheets("resultado")
+
+    ' Última linha com matrícula (coluna A)
+    ultimaLinha = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+
+    ' Tenta ativar a janela do SIAPE
+    On Error GoTo erro_ativar
+    AppActivate JANELA_SIAPE
+    On Error GoTo 0
+
+    For lin = LINHA_INICIAL To ultimaLinha
+
+        ' Se a matrícula estiver vazia, assume fim da lista
+        If Trim(ws.Cells(lin, 1).Value) = "" Then Exit For
+
+        ' Lendo os dados da linha atual
+        matricula = CStr(ws.Cells(lin, 1).Value)          ' Coluna A
+        rendimento = CStr(ws.Cells(lin, 5).Value)         ' Coluna E
+        rubrica = CStr(ws.Cells(lin, 4).Value)            ' Coluna D
+        sequencia = CStr(ws.Cells(lin, 6).Value)          ' Coluna F
+        mesAno = CStr(ws.Cells(lin, 3).Text)              ' Coluna C (texto como aparece)
+        valor = Replace(Format(ws.Cells(lin, 7).Value, "0.00"), ".", ",") ' Coluna G
+        justificativa = CStr(ws.Cells(lin, 8).Value)      ' Coluna H
+        docLegal = CStr(ws.Cells(lin, 9).Value)           ' Coluna I
+        assunto = CStr(ws.Cells(lin, 10).Value)           ' Coluna J
+
+        ' Garante que a tela preta esteja ativa
+        AppActivate JANELA_SIAPE
+        Espera 0.5
+
+        ' 1) Digita o comando fpatmovfin e ENTER
+        Application.SendKeys "fpatmovfin", True
+        Application.SendKeys "~", True   ' ENTER
+        Espera 0.5
+
+        ' 2) Matrícula SIAPE + ENTER
+        Application.SendKeys matricula, True
+        Application.SendKeys "~", True
+        Espera 0.5
+
+        ' 3) Rendimento (r) + ENTER
+        Application.SendKeys rendimento, True
+        Application.SendKeys "~", True
+        Espera 0.5
+
+        ' 4) Rubrica
+        Application.SendKeys rubrica, True
+        Application.SendKeys "{TAB}", True
+
+        ' 5) Sequência
+        Application.SendKeys sequencia, True
+        Application.SendKeys "{TAB}", True
+
+        ' 6) Tipo de operação = i
+        Application.SendKeys "i", True
+
+        ' TAB até o campo "parametrizada"
+        ' Se precisar de mais ou menos TAB, ajuste a quantidade abaixo
+        Application.SendKeys "{TAB}{TAB}", True
+
+        ' Marca X em parametrizada e ENTER
+        Application.SendKeys "x", True
+        Application.SendKeys "~", True
+        Espera 0.5
+
+        ' 7) Mês (conforme a tabela) + TAB
+        Application.SendKeys mesAno, True
+        Application.SendKeys "{TAB}", True
+
+        ' 8) Valor + TAB
+        Application.SendKeys valor, True
+        Application.SendKeys "{TAB}", True
+
+        ' 9) Assunto de cálculo (ex.: 44) + ENTER
+        Application.SendKeys assunto, True
+        Application.SendKeys "~", True
+        Espera 0.5
+
+        ' 10) Documento legal + TAB
+        Application.SendKeys docLegal, True
+        Application.SendKeys "{TAB}", True
+
+        ' 11) Justificativa + ENTER
+        Application.SendKeys justificativa, True
+        Application.SendKeys "~", True
+        Espera 0.5
+
+        ' 12) Confirma: C + ENTER
+        Application.SendKeys "c", True
+        Application.SendKeys "~", True
+        Espera 0.5
+
+        ' 13) PF3 (normalmente é F3 no teclado)
+        Application.SendKeys "{F3}", True
+        Espera 0.5
+
+    Next lin
+
+    MsgBox "Lançamentos concluídos até a linha " & (lin - 1) & " da planilha."
+
+    Exit Sub
+
+erro_ativar:
+    MsgBox "Não consegui ativar a janela do SIAPE." & vbCrLf & _
+           "Verifique o título da janela e ajuste a constante JANELA_SIAPE no código.", vbCritical
+End Sub
